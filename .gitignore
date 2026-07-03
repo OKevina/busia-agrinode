@@ -1,0 +1,13 @@
+# Local secrets — never commit
+credentials.py
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime data
+*.db
+
+# Virtual environments
+.venv/
+venv/

@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>busia-agrinode | irrigation advisory</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+
+<style>
+  :root {
+    --bg:#f4f6f9; --panel:#ffffff; --panel2:#eef2f7;
+    --text:#1f2933; --muted:#64748b; --line:#e2e8f0;
+    --accent:#2563eb;
+    --ok:#15803d; --ok-bg:#dcfce7; --ok-line:#86efac;
+    --alert:#b91c1c; --alert-bg:#fee2e2; --alert-line:#fca5a5;
+    --temp:#ea580c; --hum:#2563eb; --soil:#16a34a;
+    --maize:#d97706; --beans:#7c3aed; --sweet_potato:#0891b2;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  header {
+    padding:16px 18px; background:var(--panel); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    flex-wrap:wrap;
+  }
+  h1 { font-size:18px; margin:0; }
+  h1 small { color:var(--muted); font-weight:400; }
+  #conn { font-size:12px; color:var(--muted); font-weight:600; }
+  #conn.live { color:var(--ok); }
+  #conn.down { color:var(--alert); }
+
+  main { padding:14px; max-width:920px; margin:0 auto; }
+
+  .note {
+    font-size:12.5px; color:var(--muted); background:var(--panel2);
+    border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:16px;
+  }
+  .section-title { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:18px 2px 8px; }
+
+  /* Per-crop advisory cards */
+  .crop-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  .crop-card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .crop-card .crop-name { font-size:16px; font-weight:700; text-transform:capitalize; }
+  .crop-card .badge { display:inline-block; margin-top:10px; padding:6px 10px; border-radius:999px; font-size:13px; font-weight:700; }
+  .crop-card .meta { font-size:12px; color:var(--muted); margin-top:10px; }
+  .crop-card.advise .badge { background:var(--alert-bg); color:var(--alert); }
+  .crop-card.ok .badge { background:var(--ok-bg); color:var(--ok); }
+
+  /* Node LED indicator: mirrors the physical on-board LED */
+  .led-row { display:flex; align-items:center; gap:8px; margin:10px 2px 0; font-size:13px; color:var(--muted); }
+  .led-dot { width:13px; height:13px; border-radius:50%; background:#cbd5e1; transition:all .2s; }
+  .led-dot.on { background:var(--alert); box-shadow:0 0 9px 2px var(--alert-line); }
+
+  /* Sensor reading cards */
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card .label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .card .value { font-size:26px; font-weight:700; margin-top:6px; }
+  .card .unit  { font-size:14px; color:var(--muted); font-weight:400; }
+
+  .chart-box { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .chart-box h2 { font-size:13px; color:var(--muted); margin:0 0 8px; text-transform:uppercase; letter-spacing:.5px; }
+  canvas { width:100% !important; }
+
+  .toolbar { display:flex; gap:10px; flex-wrap:wrap; margin:16px 0; }
+  a.btn {
+    background:var(--accent); color:#fff; border:none; border-radius:8px;
+    padding:10px 14px; font-size:14px; font-weight:600; cursor:pointer;
+    text-decoration:none; display:inline-block;
+  }
+  footer { color:var(--muted); font-size:12px; text-align:center; padding:18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>busia-agrinode <small>| irrigation advisory | node 4d</small></h1>
+  <span id="conn" class="down">connecting…</span>
+</header>
+
+<main>
+  <div class="note">
+    <strong>Advisory System:</strong> This node measures soil moisture and microclimate to recommend watering times. It does not automatically operate any pumps. Triggers are adjusted for weather; for example, hot and dry air raises a crop's threshold to advise watering sooner.
+  </div>
+
+  <div class="section-title">Per-crop recommendation (current conditions)</div>
+  <div id="crop-panel" class="crop-grid"></div>
+
+  <div class="section-title">Live sensor readings</div>
+  <div class="cards">
+    <div class="card"><div class="label">Temperature</div><div class="value"><span id="v-temp">--</span><span class="unit"> °C</span></div></div>
+    <div class="card"><div class="label">Humidity</div><div class="value"><span id="v-hum">--</span><span class="unit"> %</span></div></div>
+    <div class="card"><div class="label">Soil moisture</div><div class="value"><span id="v-soil">--</span><span class="unit"> %</span></div></div>
+  </div>
+  <p class="meta" style="font-size:12px;color:var(--muted);margin:8px 2px 0">
+    Node's on-board LED tracks the <strong id="v-nodecrop">--</strong> threshold (its configured crop).
+  </p>
+  <div class="led-row">
+    <span id="led-dot" class="led-dot"></span>
+    <span id="led-text">Node LED: waiting…</span>
+  </div>
+
+  <div class="toolbar">
+    <a class="btn" href="/export.csv">⬇ Download CSV</a>
+  </div>
+
+  <div class="section-title">History</div>
+  <div class="chart-box"><h2>Temperature (°C)</h2><canvas id="chart-temp" height="120"></canvas></div>
+  <div class="chart-box"><h2>Humidity (%)</h2><canvas id="chart-hum" height="120"></canvas></div>
+  <div class="chart-box"><h2>Soil moisture % (dashed lines = each crop's watering trigger)</h2><canvas id="chart-soil" height="130"></canvas></div>
+
+  <footer>busia-agrinode | advisory dashboard | end-to-end encrypted: node -> TLS -> database</footer>
+</main>
+
+<script>
+
+const POLL_MS = 3000;
+let lastId = 0;
+
+const CROPS = { maize: 45, beans: 40, sweet_potato: 30 };
+const CROP_LIST = ["maize", "beans", "sweet_potato"];
+const ET_TEMP_HOT = 30, ET_HUMID_DRY = 40, ET_ADJUST = 5;
+const CROP_COLOR = { maize: "#d97706", beans: "#7c3aed", sweet_potato: "#0891b2" };
+
+const MAX_POINTS = 60;
+
+function effThreshold(base, temp, humidity) {
+  let adj = 0;
+  if (temp != null && temp > ET_TEMP_HOT) adj += ET_ADJUST;
+  if (humidity != null && humidity < ET_HUMID_DRY) adj += ET_ADJUST;
+  return Math.min(100, base + adj);
+}
+
+const cropPanel = document.getElementById("crop-panel");
+const cropEls = {};
+for (const crop of CROP_LIST) {
+  const card = document.createElement("div");
+  card.className = "crop-card";
+  card.innerHTML =
+    '<div class="crop-name">' + crop.replace("_", " ") + '</div>' +
+    '<div class="badge">-</div>' +
+    '<div class="meta">trigger <span class="thr">--</span>% | soil <span class="soil">--</span>%</div>';
+  cropPanel.appendChild(card);
+  cropEls[crop] = {
+    card: card,
+    badge: card.querySelector(".badge"),
+    thr: card.querySelector(".thr"),
+    soil: card.querySelector(".soil"),
+  };
+}
+
+function updateCropPanel(d) {
+  for (const crop of CROP_LIST) {
+    const el = cropEls[crop];
+    const thr = effThreshold(CROPS[crop], d.temp, d.humidity);
+    el.thr.textContent = thr;
+    el.soil.textContent = (d.soil ?? "--");
+    if (d.soil == null) { el.card.className = "crop-card"; el.badge.textContent = "-"; continue; }
+    const needsWater = d.soil < thr;
+    el.card.className = "crop-card " + (needsWater ? "advise" : "ok");
+    el.badge.textContent = needsWater ? "Needs water" : "Soil OK";
+  }
+}
+
+function makeChart(id, color) {
+  return new Chart(document.getElementById(id), {
+    type: "line",
+    data: { labels: [], datasets: [{
+      data: [], borderColor: color, backgroundColor: color + "22",
+      borderWidth: 2, pointRadius: 0, tension: 0.25, fill: true,
+    }]},
+    options: {
+      responsive: true, animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#64748b", maxTicksLimit: 6 }, grid: { color: "#e2e8f0" } },
+        y: { ticks: { color: "#64748b" }, grid: { color: "#e2e8f0" } },
+      },
+    },
+  });
+}
+const charts = {
+  temp: makeChart("chart-temp", "#ea580c"),
+  hum:  makeChart("chart-hum",  "#2563eb"),
+};
+
+const soilDatasets = [{
+  label: "Soil %",
+  data: [], borderColor: "#16a34a", backgroundColor: "#16a34a22",
+  borderWidth: 2, pointRadius: 0, tension: 0.25, fill: true,
+}].concat(CROP_LIST.map(crop => ({
+  label: crop.replace("_", " ") + " trigger",
+  data: [], borderColor: CROP_COLOR[crop], borderWidth: 1.5,
+  borderDash: [6, 4], pointRadius: 0, tension: 0, fill: false,
+})));
+
+const soilChart = new Chart(document.getElementById("chart-soil"), {
+  type: "line",
+  data: { labels: [], datasets: soilDatasets },
+  options: {
+    responsive: true, animation: false,
+    plugins: { legend: { display: true, labels: { color: "#64748b", boxWidth: 12, font: { size: 11 } } } },
+    scales: {
+      x: { ticks: { color: "#64748b", maxTicksLimit: 6 }, grid: { color: "#e2e8f0" } },
+      y: { min: 0, max: 100, ticks: { color: "#64748b" }, grid: { color: "#e2e8f0" } },
+    },
+  },
+});
+
+function pushPoint(chart, label, value) {
+  chart.data.labels.push(label);
+  chart.data.datasets[0].data.push(value);
+  if (chart.data.labels.length > MAX_POINTS) {
+    chart.data.labels.shift();
+    chart.data.datasets[0].data.shift();
+  }
+  chart.update("none");
+}
+
+function pushSoil(label, soil, temp, humidity) {
+  soilChart.data.labels.push(label);
+  soilChart.data.datasets[0].data.push(soil);
+  CROP_LIST.forEach((crop, i) => {
+    soilChart.data.datasets[i + 1].data.push(effThreshold(CROPS[crop], temp, humidity));
+  });
+  if (soilChart.data.labels.length > MAX_POINTS) {
+    soilChart.data.labels.shift();
+    soilChart.data.datasets.forEach(ds => ds.data.shift());
+  }
+  soilChart.update("none");
+}
+
+function fmtTime(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  return d.toLocaleTimeString();
+}
+
+function updateReadings(d) {
+  document.getElementById("v-temp").textContent = (d.temp ?? "--");
+  document.getElementById("v-hum").textContent  = (d.humidity ?? "--");
+  document.getElementById("v-soil").textContent = (d.soil ?? "--");
+  if (d.crop) document.getElementById("v-nodecrop").textContent = d.crop.replace("_", " ");
+  updateCropPanel(d);
+
+  const ledOn = !!d.irrigate;
+  const cropName = d.crop ? d.crop.replace("_", " ") : "crop";
+  document.getElementById("led-dot").className = "led-dot" + (ledOn ? " on" : "");
+  document.getElementById("led-text").textContent =
+    ledOn ? ("Node LED ON: " + cropName + " needs water")
+          : ("Node LED off: " + cropName + " soil OK");
+}
+
+fetch("/history?limit=200")
+  .then(r => r.json())
+  .then(rows => {
+    for (const row of rows) {
+      const t = fmtTime(row.ts);
+      if (row.temp     != null) pushPoint(charts.temp, t, row.temp);
+      if (row.humidity != null) pushPoint(charts.hum,  t, row.humidity);
+      if (row.soil     != null) pushSoil(t, row.soil, row.temp, row.humidity);
+    }
+    if (rows.length) {
+      const last = rows[rows.length - 1];
+      updateReadings(last);
+      lastId = last.id || 0;
+    }
+  })
+  .catch(err => console.error("history fetch failed:", err));
+
+const conn = document.getElementById("conn");
+
+function poll() {
+  fetch("/history?limit=1")
+    .then(r => r.json())
+    .then(rows => {
+      conn.textContent = "● live"; conn.className = "live";
+      if (!rows.length) return;
+      const d = rows[rows.length - 1];
+      if (d.id && d.id === lastId) return;    
+      lastId = d.id || lastId;
+      updateReadings(d);
+      const t = fmtTime(d.ts);
+      if (d.temp     != null) pushPoint(charts.temp, t, d.temp);
+      if (d.humidity != null) pushPoint(charts.hum,  t, d.humidity);
+      if (d.soil     != null) pushSoil(t, d.soil, d.temp, d.humidity);
+    })
+    .catch(() => { conn.textContent = "● offline"; conn.className = "down"; });
+}
+
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>
