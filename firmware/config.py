@@ -37,5 +37,5 @@ ET_TEMP_HOT  = 30
 ET_HUMID_DRY = 40
 ET_ADJUST    = 5
 
-# Publish generated values when the physical sensors are unavailable
+# Test entire pipeline when the physical sensors are unavailable
 SIMULATE = False
