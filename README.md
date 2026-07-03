@@ -93,11 +93,9 @@ The server connects to HiveMQ, subscribes to the telemetry topic, and stores
 each reading. The dashboard shows the per-crop advisory, the current sensor
 values and historical charts, and provides a CSV download.
 
-## Simulation mode
+## Development and testing mode
 
-If the physical sensors are not available, set SIMULATE = True in
-firmware/config.py. The node then publishes generated values, still encrypted,
-so the full pipeline can be demonstrated without working sensors.
+Setting `SIMULATE = True` in `firmware/config.py` makes the node publish generated sensor values (tagged `[SIM]` in the serial log). This is for developing and testing the full node-to-dashboard pipeline offline — before the sensors are wired, or when hardware is unavailable.
 
 ## Security notes
 
